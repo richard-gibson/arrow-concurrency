@@ -28,7 +28,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
           it.takers.dequeueOption().fold(
             { p.complete(Unit) toT State.Surplus(emptyJQueue<A>().enqueue(a), emptyJQueue()) },
             { (taker, takers) ->
-              taker.complete(a) productR p.complete(Unit) toT State.Deficit(takers)
+              taker.complete(a) zipRight p.complete(Unit) toT State.Deficit(takers)
             }
           )
         }
@@ -50,7 +50,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
               { just(Unit) toT State.Deficit(emptyJQueue<Promise<F, A>>().enqueue(p)) },
               { (putter, putters) ->
                 val (a, prom) = putter
-                (prom.complete(Unit) productR p.complete(a)) toT State.Surplus(
+                (prom.complete(Unit) zipRight p.complete(a)) toT State.Surplus(
                   emptyJQueue(),
                   putters
                 )
@@ -62,7 +62,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
                 { p.complete(a) toT State.Surplus(q, surplus.putters) },
                 { (putter, putters) ->
                   val (putVal, putProm) = putter
-                  (putProm.complete(Unit) productR p.complete(a)) toT State.Surplus(q.enqueue(putVal), putters)
+                  (putProm.complete(Unit) zipRight p.complete(a)) toT State.Surplus(q.enqueue(putVal), putters)
                 })
             }
           )
@@ -100,7 +100,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
         a2 toT (fc toT pb)
       }
       val c = !fc
-      !(pRef.update { Some(c toT pb) } productR just(pb)).uncancelable()
+      !(pRef.set(Some(c toT pb)) zipRight just(pb)).uncancelable()
       !pb.get()
     }.guarantee(pRef.get().flatMap { it.map { (c, fb) -> release(c, fb) }.getOrElse { just(Unit) } })
       )
@@ -144,7 +144,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
       is State.Deficit -> ifDeficit(this)
     }
 
-  infix fun <A, B> Kind<F, A>.productR(fb: Kind<F, B>): Kind<F, B> = map2(fb) { (_, b) -> b }
+  infix fun <A, B> Kind<F, A>.zipRight(fb: Kind<F, B>): Kind<F, B> = map2(fb) { (_, b) -> b }
 }
 
 fun <A> JQueue<A>.filter(pred: (A) -> Boolean) =
