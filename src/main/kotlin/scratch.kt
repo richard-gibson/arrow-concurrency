@@ -24,7 +24,7 @@ fun main() {
   println("-----------")
 //  println(suspendOffer.unsafeRunSync()) // will not run
   println("-----------")
-  println(suspendTakers.unsafeRunSync()) //Tuple3(a=10, b=20, c=30)
+//  println(suspendTakers.unsafeRunSync()) // Tuple3(a=10, b=20, c=30)
   println("-----------")
   multiProducerMultiConsumer.unsafeRunSync()
 //  producer 3 offering: 7
@@ -35,7 +35,6 @@ fun main() {
 //  producer 1 offering: 10
 //  producer 3 offering: 7
 //  ...
-
 }
 
 fun <T> IO.Companion.boundedQueue(capacity: Int) =
@@ -50,7 +49,6 @@ fun <F, A, B> Kind<F, A>.forever(M: Monad<F>): Kind<F, B> = M.run {
   tailRecM(Unit, stepResult)
 }
 
-
 fun <F, A, B> Kind<F, A>.repeatEvery(duration: Duration, C: Concurrent<F>): Kind<F, B> = C.run {
   // allocate two things once for efficiency.
   val leftUnit = { _: A -> Either.Left(Unit) }
@@ -61,7 +59,6 @@ fun <F, A, B> Kind<F, A>.repeatEvery(duration: Duration, C: Concurrent<F>): Kind
   }
   tailRecM(Unit, stepResult)
 }
-
 
 fun <A, B> IO<A>.repeatEvery(duration: Duration) = repeatEvery<ForIO, A, B>(duration, IO.concurrent()).fix()
 fun <A, B> IO<A>.forever() = forever<ForIO, A, B>(IO.monad()).fix()
@@ -100,12 +97,11 @@ val suspendOffer = IO.fx {
   !queue.take() // never reached
 }
 
-
 // 3 take requests suspended waiting for offers to queue.
 // 3 offers made and take results retrieved using Fiber#join
 val suspendTakers = IO.fx {
   val context = dispatchers().default()
-  //still a bounded queue of 1
+  // still a bounded queue of 1
   val queue = !IO.boundedQueue<Int>(1)
 
   // start many takers that will suspend on fibers
@@ -124,7 +120,6 @@ val suspendTakers = IO.fx {
   Tuple3(t1, t2, t3)
 }
 
-
 fun <A> offerAfter(latency: Duration, label: String, a: A, queue: Queue<ForIO, A>): IO<Unit> = IO.fx {
   !putStrLn("$label: $a")
   !queue.offer(a)
@@ -136,7 +131,6 @@ fun <A> consumeAfter(latency: Duration, label: String, queue: Queue<ForIO, A>): 
 }.repeatEvery(latency)
 
 val multiProducerMultiConsumer = IO.fx {
-
   val context = dispatchers().default()
   val queue = !IO.boundedQueue<Int>(10000)
   val fo1 = !context.startFiber(offerAfter(1.seconds, "producer 1 offering", 10, queue))
@@ -151,4 +145,3 @@ val multiProducerMultiConsumer = IO.fx {
   !fc1.cancel()
   !fc2.cancel()
 }
-
