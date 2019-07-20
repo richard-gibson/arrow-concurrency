@@ -4,12 +4,10 @@ import arrow.core.Tuple3
 import arrow.fx.*
 import arrow.fx.extensions.fx
 import arrow.fx.extensions.io.concurrent.concurrent
-import arrow.fx.extensions.io.monad.monad
 import arrow.fx.typeclasses.Concurrent
 import arrow.fx.typeclasses.Duration
 import arrow.fx.typeclasses.milliseconds
 import arrow.fx.typeclasses.seconds
-import arrow.typeclasses.Monad
 import io.hexlabs.concurrent.Queue
 
 /**
@@ -42,13 +40,6 @@ fun <T> IO.Companion.boundedQueue(capacity: Int) =
 
 fun putStrLn(s: String) = IO.later { println(s) }
 
-fun <F, A, B> Kind<F, A>.forever(M: Monad<F>): Kind<F, B> = M.run {
-  // allocate two things once for efficiency.
-  val leftUnit = { _: A -> Either.Left(Unit) }
-  val stepResult: (Unit) -> Kind<F, Either<Unit, B>> = { this@forever.map(leftUnit) }
-  tailRecM(Unit, stepResult)
-}
-
 fun <F, A, B> Kind<F, A>.repeatEvery(duration: Duration, C: Concurrent<F>): Kind<F, B> = C.run {
   // allocate two things once for efficiency.
   val leftUnit = { _: A -> Either.Left(Unit) }
@@ -61,7 +52,6 @@ fun <F, A, B> Kind<F, A>.repeatEvery(duration: Duration, C: Concurrent<F>): Kind
 }
 
 fun <A, B> IO<A>.repeatEvery(duration: Duration) = repeatEvery<ForIO, A, B>(duration, IO.concurrent()).fix()
-fun <A, B> IO<A>.forever() = forever<ForIO, A, B>(IO.monad()).fix()
 
 // push data, consume, return result
 val simpleOfferTake = IO.fx {
