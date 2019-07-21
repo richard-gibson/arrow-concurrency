@@ -6,7 +6,7 @@ plugins {
   id("org.jetbrains.kotlin.kapt") version "1.3.41"
 }
 
-val arrowVersion = "0.9.1-SNAPSHOT"
+val arrowVersion = "0.10.0-SNAPSHOT"
 
 val kotlintestVersion = "3.3.1"
 

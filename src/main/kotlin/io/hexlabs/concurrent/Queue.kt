@@ -5,30 +5,29 @@ import arrow.core.*
 import arrow.fx.Promise
 import arrow.fx.Ref
 import arrow.fx.typeclasses.Concurrent
-import java.util.*
-import java.util.Queue as JQueue
+import arrow.typeclasses.Applicative
 
-class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F, State<F, A>>, C: Concurrent<F>) :
+class Queue<F, A> private constructor(val capacity: Int, val ref: Ref<F, State<F, A>>, val C: Concurrent<F>) :
   Concurrent<F> by C {
 
-  fun size(): Kind<F, Int> = ref.get().map { it.size() }
+  fun size(): Kind<F, Int> = ref.get().flatMap { it.size() }
 
   fun offer(a: A): Kind<F, Unit> {
     val use: (Promise<F, Unit>, State<F, A>) -> Tuple2<Kind<F, Unit>, State<F, A>> = { p, state ->
       state.fold(
         {
-          with(it) {
-            if (queue.size < capacity && putters.isEmpty())
+          it.run {
+            if (queue.length() < capacity && putters.isEmpty())
               p.complete(Unit) toT copy(queue = queue.enqueue(a))
             else
-              unit() toT State.Surplus(queue, putters.enqueue(a toT p))
+              unit() toT it.copy(putters = putters.enqueue(a toT p))
           }
         },
         {
           it.takers.dequeueOption().fold(
-            { p.complete(Unit) toT State.Surplus(emptyJQueue<A>().enqueue(a), emptyJQueue()) },
+            { p.complete(Unit) toT State.Surplus(IQueue.empty<A>().enqueue(a), IQueue.empty(), C) },
             { (taker, takers) ->
-              taker.complete(a) zipRight p.complete(Unit) toT State.Deficit(takers)
+              taker.complete(a) zipRight p.complete(Unit) toT it.copy(takers = takers)
             }
           )
         }
@@ -47,27 +46,30 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
         { surplus ->
           surplus.queue.dequeueOption().fold({
             surplus.putters.dequeueOption().fold(
-              { just(Unit) toT State.Deficit(emptyJQueue<Promise<F, A>>().enqueue(p)) },
+              { just(Unit) toT State.Deficit(IQueue.empty<Promise<F, A>>().enqueue(p), C) },
               { (putter, putters) ->
                 val (a, prom) = putter
-                (prom.complete(Unit) zipRight p.complete(a)) toT State.Surplus(
-                  emptyJQueue(),
-                  putters
+                (prom.complete(Unit) zipRight p.complete(a)) toT surplus.copy(
+                  queue = IQueue.empty(),
+                  putters = putters
                 )
               }
             )
           },
             { (a, q) ->
               surplus.putters.dequeueOption().fold(
-                { p.complete(a) toT State.Surplus(q, surplus.putters) },
+                { p.complete(a) toT surplus.copy(queue = q) },
                 { (putter, putters) ->
                   val (putVal, putProm) = putter
-                  (putProm.complete(Unit) zipRight p.complete(a)) toT State.Surplus(q.enqueue(putVal), putters)
+                  (putProm.complete(Unit) zipRight p.complete(a)) toT surplus.copy(
+                    queue = q.enqueue(putVal),
+                    putters = putters
+                  )
                 })
             }
           )
         },
-        { deficit -> just(Unit) toT State.Deficit(deficit.takers.enqueue(p)) }
+        { deficit -> just(Unit) toT deficit.copy(takers = deficit.takers.enqueue(p)) }
       )
     }
 
@@ -78,7 +80,7 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
 
   companion object {
     fun <F, A> bounded(capacity: Int, C: Concurrent<F>): Kind<F, Queue<F, A>> = C.run {
-      ref<State<F, A>> { State.Surplus(emptyJQueue(), emptyJQueue()) }.map {
+      ref<State<F, A>> { State.Surplus(IQueue.empty(), IQueue.empty(), C) }.map {
         Queue(capacity, it, this)
       }
     }
@@ -111,63 +113,48 @@ class Queue<F, A> private constructor(val capacity: Int, private val ref: Ref<F,
 
   private fun <A> removeTaker(taker: Promise<F, A>): Kind<F, Unit> =
     ref.update { state ->
-      state.fold(::identity) { deficit -> State.Deficit(deficit.takers.filterNot { it == taker }) }
+      state.fold(::identity) {
+        it.run { copy(takers.filterNot { t -> t == taker }) }
+      }
     }
 
   private fun removePutter(putter: Promise<F, Unit>): Kind<F, Unit> =
     ref.update { state ->
       state.fold(
-        { surplus -> State.Surplus(surplus.queue, surplus.putters.filterNot { it == putter }) },
+        {
+          it.run { copy(putters = putters.filterNot { p -> p == putter }) }
+        },
         ::identity
       )
     }
 
   sealed class State<F, A> {
-    abstract fun size(): Int
+    abstract fun size(): Kind<F, Int>
 
-    internal data class Deficit<F, A>(val takers: JQueue<Promise<F, A>>) : State<F, A>() {
-      override fun size(): Int = -takers.size
+    internal data class Deficit<F, A>(val takers: IQueue<Promise<F, A>>, val AP: Applicative<F>) : State<F, A>() {
+      override fun size(): Kind<F, Int> = AP.just(-takers.length())
     }
 
-    internal data class Surplus<F, A>(val queue: JQueue<A>, val putters: JQueue<Tuple2<A, Promise<F, Unit>>>) :
+    internal data class Surplus<F, A>(val queue: IQueue<A>, val putters: IQueue<Tuple2<A, Promise<F, Unit>>>, val AP: Applicative<F>) :
       State<F, A>() {
-      override fun size(): Int = queue.size + putters.size
+      override fun size(): Kind<F, Int> = AP.just(queue.length() + putters.length())
     }
+
+/*    internal data class Shutdown<F>(val AE: ApplicativeError<F, Throwable>) : State<F, Nothing>() {
+      override fun size(): Kind<F, Int> = AE.raiseError(QueueShutdown)
+    }*/
   }
 
   internal fun <F, A, C> State<F, A>.fold(
     ifSurplus: (State.Surplus<F, A>) -> C,
     ifDeficit: (State.Deficit<F, A>) -> C
+//    ifShutdown: (State.Shutdown<F>) -> C = TODO()
   ) =
     when (this) {
       is State.Surplus -> ifSurplus(this)
       is State.Deficit -> ifDeficit(this)
+//      is State.Shutdown -> ifShutdown(this)
     }
 
   infix fun <A, B> Kind<F, A>.zipRight(fb: Kind<F, B>): Kind<F, B> = map2(fb) { (_, b) -> b }
 }
-
-fun <A> JQueue<A>.filter(pred: (A) -> Boolean) =
-  this.fold(emptyJQueue<A>()) { queue, elem ->
-    if (pred(elem)) queue.enqueue(elem)
-    else queue
-  }
-
-fun <A> JQueue<A>.filterNot(pred: (A) -> Boolean) =
-  filter { !pred(it) }
-
-fun <A> JQueue<A>.dequeue(): Tuple2<A, JQueue<A>>? =
-  this.poll()?.let { it toT this }
-
-fun <A> JQueue<A>.enqueue(a: A): JQueue<A> = apply { add(a) }
-
-fun <A> JQueue<A>.dequeueOption(): Option<Tuple2<A, JQueue<A>>> =
-  dequeue().toOption()
-
-//    this.poll().toOption().map { it toT this }
-fun <A, R> JQueue<A>.fold(r: R, f: (R, A) -> R): R =
-  dequeue()?.let { (a, queue) ->
-    queue.fold(f(r, a), f)
-  } ?: r
-
-fun <A> emptyJQueue(): JQueue<A> = LinkedList<A>()
