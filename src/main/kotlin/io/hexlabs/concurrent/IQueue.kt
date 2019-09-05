@@ -17,8 +17,8 @@ import arrow.core.extensions.list.foldable.nonEmpty
 
 class IQueue<A> private constructor(val lIn: List<A>, val lOut: List<A>) {
 
-  private fun <A> List<A>.head() = first()
-  private fun <A> List<A>.tail() = drop(1)
+  private fun <A> Iterable<A>.head() = first()
+  private fun <A> Iterable<A>.tail() = drop(1)
   private fun cons(a: A, l: List<A>): List<A> = listOf(a) + l
 
   fun isEmpty(): Boolean = lIn.isEmpty() && lOut.isEmpty()
@@ -47,6 +47,8 @@ class IQueue<A> private constructor(val lIn: List<A>, val lOut: List<A>) {
   fun length(): Int = lIn.size + lOut.size
 
   fun enqueue(elem: A) = IQueue(cons(elem, lIn), lOut)
+  fun enqueue(elems: Iterable<A>) = IQueue(elems.reversed() + lIn, lOut)
+
 
   fun dequeue(): Tuple2<A, IQueue<A>> =
     when {

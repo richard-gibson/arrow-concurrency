@@ -1,6 +1,8 @@
 import arrow.Kind
-import arrow.core.Either
-import arrow.core.Tuple3
+import arrow.core.*
+import arrow.core.extensions.list.traverse.sequence
+import arrow.core.extensions.option.applicative.applicative
+import arrow.core.extensions.option.applicative.map
 import arrow.fx.*
 import arrow.fx.extensions.fx
 import arrow.fx.extensions.io.concurrent.concurrent
@@ -33,6 +35,10 @@ fun main() {
 //  producer 1 offering: 10
 //  producer 3 offering: 7
 //  ...
+  val l = listOf(Option(1), Option(2)).sequence(Option.applicative()).map { it.fix() }.fix()
+
+  val nl = NonEmptyList.of(Option(1), Option(2)).sequence(Option.applicative()).fix()
+
 }
 
 fun <T> IO.Companion.boundedQueue(capacity: Int) =
@@ -65,13 +71,13 @@ val simpleOfferTake = IO.fx {
   Tuple3(t1, t2, t3)
 }
 
-// bounded queue of 1, 2nd offer suspends in separate fiber untll another take
+// bounded queue of 1, 2nd offer suspends in separate fiber until another take
 // returns result of 2nd take
 val suspendOfferFiber = IO.fx {
   val context = dispatchers().default()
   val queue = !IO.boundedQueue<Int>(1)
   !queue.offer(10)
-  val f = !context.startFiber(queue.offer(20)) // will be suspended because the queue is full
+  val f = !queue.offer(20).fork(context) // will be suspended because the queue is full
   !queue.take()
   // join fibre, suspended offer will have completed
   !f.join()
@@ -95,9 +101,9 @@ val suspendTakers = IO.fx {
   val queue = !IO.boundedQueue<Int>(1)
 
   // start many takers that will suspend on fibers
-  val f1 = !context.startFiber(queue.take())
-  val f2 = !context.startFiber(queue.take())
-  val f3 = !context.startFiber(queue.take())
+  val f1 = !queue.take().fork(context)
+  val f2 = !queue.take().fork(context)
+  val f3 = !queue.take().fork(context)
   // each offer completes a taker that consumes and allows the
   // next offer to proceed
   !queue.offer(10)
@@ -109,6 +115,7 @@ val suspendTakers = IO.fx {
   val t3 = !f3.join()
   Tuple3(t1, t2, t3)
 }
+
 
 fun <A> offerAfter(latency: Duration, label: String, a: A, queue: Queue<ForIO, A>): IO<Unit> = IO.fx {
   !putStrLn("$label: $a")
@@ -123,11 +130,11 @@ fun <A> consumeAfter(latency: Duration, label: String, queue: Queue<ForIO, A>): 
 val multiProducerMultiConsumer = IO.fx {
   val context = dispatchers().default()
   val queue = !IO.boundedQueue<Int>(10000)
-  val fo1 = !context.startFiber(offerAfter(1.seconds, "producer 1 offering", 10, queue))
-  val fo2 = !context.startFiber(offerAfter(2.seconds, "producer 2 offering", 5, queue))
-  val fo3 = !context.startFiber(offerAfter(1.seconds, "producer 3 offering", 7, queue))
-  val fc1 = !context.startFiber(consumeAfter(500.milliseconds, "consumer 1 taking", queue))
-  val fc2 = !context.startFiber(consumeAfter(700.milliseconds, "consumer 2 taking", queue))
+  val fo1 = !offerAfter(1.seconds, "producer 1 offering", 10, queue).fork(context)
+  val fo2 = !offerAfter(2.seconds, "producer 2 offering", 5, queue).fork(context)
+  val fo3 = !offerAfter(1.seconds, "producer 3 offering", 7, queue).fork(context)
+  val fc1 = !consumeAfter(500.milliseconds, "consumer 1 taking", queue).fork(context)
+  val fc2 = !consumeAfter(700.milliseconds, "consumer 2 taking", queue).fork(context)
   !timer().sleep(10.seconds)
   !fo1.cancel()
   !fo2.cancel()
